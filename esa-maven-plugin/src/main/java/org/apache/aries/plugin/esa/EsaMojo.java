@@ -36,6 +36,7 @@ import org.apache.maven.artifact.Artifact;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.project.MavenProject;
+import org.apache.maven.project.MavenProjectHelper;
 import org.codehaus.plexus.archiver.ArchiverException;
 import org.codehaus.plexus.archiver.zip.ZipArchiver;
 import org.codehaus.plexus.util.DirectoryScanner;
@@ -178,6 +179,13 @@ public class EsaMojo
      * @parameter expression="${forceCreation}" default-value="false"
      */
     private boolean forceCreation;
+    
+    /**
+     * Attach ESA to main artifact under the esa classifier
+     *
+     * @parameter expression="${attachEsa}" default-value="false"
+     */
+    private boolean attachEsa;
 
     /**
      * Define which bundles to include in the archive.
@@ -208,6 +216,11 @@ public class EsaMojo
     private String startOrder;
 
     private File buildDir;
+    
+    /**
+     * @component
+     */
+    private MavenProjectHelper projectHelper;
 
     /**
      * add the dependencies to the archive depending on the configuration of <archiveContent />
@@ -236,11 +249,7 @@ public class EsaMojo
                 // Explicitly add self to bundle set (used when pom packaging
                 // type != "esa" AND a file is present (no point to add to
                 // zip archive without file)
-                final Artifact selfArtifact = project.getArtifact();
-                if (!"esa".equals(selfArtifact.getType()) && selfArtifact.getFile() != null) {
-                    getLog().info("Explicitly adding artifact[" + selfArtifact.getGroupId() + ", " + selfArtifact.getId() + ", " + selfArtifact.getScope() + "]");
-                    artifacts.add(project.getArtifact());
-                }
+            	addNonEsaSelfToArtifacts(artifacts);
                 
                 artifacts = selectArtifactsInCompileOrRuntimeScope(artifacts);
                 artifacts = selectNonJarArtifactsAndBundles(artifacts);
@@ -250,7 +259,16 @@ public class EsaMojo
                     if (!artifact.isOptional() /*&& filter.include(artifact)*/) {
                         getLog().info("Copying artifact[" + artifact.getGroupId() + ", " + artifact.getId() + ", " +
                                 artifact.getScope() + "]");
-                        zipArchiver.addFile(artifact.getFile(), artifact.getArtifactId() + "-" + artifact.getVersion() + "." + (artifact.getType() == null ? "jar" : artifact.getType()));
+                        String type = artifact.getType();
+                        if(type == null) {
+                        	type = "jar";
+                        }
+                        else if ("bundle".equals(type))
+                        {
+                        	type = "jar";
+                        }
+                        
+                        zipArchiver.addFile(artifact.getFile(), artifact.getArtifactId() + "-" + artifact.getVersion() + "." + type);
                         cnt++;
                     }
                 }               
@@ -263,6 +281,14 @@ public class EsaMojo
         }
 
     }
+
+	private void addNonEsaSelfToArtifacts(Set<Artifact> artifacts) {
+		final Artifact selfArtifact = project.getArtifact();
+		if (!"esa".equals(selfArtifact.getType()) && selfArtifact.getFile() != null) {
+		    getLog().info("Explicitly adding artifact[" + selfArtifact.getGroupId() + ", " + selfArtifact.getId() + ", " + selfArtifact.getScope() + "]");
+		    artifacts.add(project.getArtifact());
+		}
+	}
     
     /**
      * 
@@ -443,9 +469,12 @@ public class EsaMojo
                 default:
                     throw new MojoExecutionException("Invalid configuration for <manifestContent/>.  Valid values are content and all." );
             }
-
+            
             artifacts = selectArtifactsInCompileOrRuntimeScope(artifacts);
             artifacts = selectNonJarArtifactsAndBundles(artifacts);
+            if(this.attachEsa) {
+            	addNonEsaSelfToArtifacts(artifacts);
+            }
 
             Iterator<Artifact> iter = artifacts.iterator();
 
@@ -626,8 +655,11 @@ public class EsaMojo
 
 
             zipArchiver.createArchive();
-
-            project.getArtifact().setFile( esaFile );
+            if(this.attachEsa) {
+            	this.projectHelper.attachArtifact(this.project, "esa", "esa", esaFile);
+            } else {
+            	project.getArtifact().setFile( esaFile );
+            }
         }
         catch ( Exception e )
         {
